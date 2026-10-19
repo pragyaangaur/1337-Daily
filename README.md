@@ -41,3 +41,7 @@ python3 install_launchd.py
 - LeetCode's session expires after a few weeks. The bot sends a notification when that happens, and you run `--login` again.
 - Chrome opens a window during a run, which lasts a few minutes.
 - LeetCode's terms ban automated submissions, so the account could be flagged. The bot only touches the practice problem set and never joins a rated contest.
+
+## Licence
+
+The code is under the MIT licence, see `LICENSE`. The solutions in `pool.jsonl` come from kamyu104's repository, whose MIT licence is in `THIRD_PARTY_NOTICES.md`.
