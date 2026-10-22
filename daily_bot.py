@@ -94,8 +94,18 @@ def api_problems(page):
     """Return (logged_in_user, set of solved slugs) from LeetCode's own API."""
     if "leetcode.com" not in page.url:
         page.goto("https://leetcode.com/problemset/", wait_until="domcontentloaded")
-    data = page.evaluate(
-        "fetch('/api/problems/all/', {credentials: 'include'}).then(r => r.json())")
+    for attempt in (1, 2):
+        try:
+            # A redirect (a Cloudflare check or a sign-in page) can destroy the
+            # page while the fetch runs, so wait for it to settle and try once more.
+            page.wait_for_load_state("load", timeout=30000)
+            data = page.evaluate(
+                "fetch('/api/problems/all/', {credentials: 'include'}).then(r => r.json())")
+            break
+        except Exception:
+            if attempt == 2:
+                raise
+            time.sleep(5)
     user = data.get("user_name") or ""
     solved = {x["stat"]["question__title_slug"]
               for x in data.get("stat_status_pairs", []) if x.get("status") == "ac"}
@@ -181,7 +191,10 @@ def run(args):
         st = load_state()
         day = today_entry(st)
         save_state(st)
-        if not args.force and not args.dry_run and not args.count:
+        manual = args.force or args.dry_run or args.count
+        if st.get("logged_out") and not manual:
+            return 0  # no browser until --login is run again
+        if not manual:
             if len(day["ac"]) >= PER_DAY or day["attempts"] >= MAX_ATTEMPTS_PER_DAY:
                 return 0
             if dt.datetime.now().strftime("%H:%M") < day["start_at"]:
@@ -199,11 +212,13 @@ def run(args):
                     return 1
                 if not user:
                     log.info("not logged in")
-                    if not day["notified"]:
-                        day["notified"] = True
-                        save_state(st)
-                        notify("Logged out. Run: python3 daily_bot.py --login")
+                    st["logged_out"] = True
+                    save_state(st)
+                    page.screenshot(path=str(DATA / "logged-out.png"))
+                    notify("Logged out. Run: python3 daily_bot.py --login")
                     return 1
+                if st.pop("logged_out", None):
+                    save_state(st)
                 log.info("logged in as %s, %d solved, %d AC today", user, len(solved), len(day["ac"]))
 
                 need = 1 if args.dry_run else (args.count or PER_DAY - len(day["ac"]))
@@ -229,6 +244,10 @@ def run(args):
                         res = submit(page)
                     except Exception as e:
                         log.info("[%s] ERR %r", slug, e)
+                        try:  # a picture of what the page showed, for debugging
+                            page.screenshot(path=str(DATA / "last-error.png"))
+                        except Exception:
+                            pass
                         misses += 1
                         if misses >= MAX_MISSES_IN_A_ROW:
                             notify("Three failures in a row, stopping for now.")
@@ -270,6 +289,9 @@ def login():
             except Exception:
                 continue
             if user:
+                st = load_state()
+                if st.pop("logged_out", None):
+                    save_state(st)
                 print(f"Logged in as {user}. Session saved in {PROFILE}.")
                 ctx.close()
                 return 0
@@ -284,5 +306,5 @@ if __name__ == "__main__":
     ap.add_argument("--dry-run", action="store_true")
     ap.add_argument("--force", action="store_true")
     ap.add_argument("--count", type=int, help="submit this many now, ignoring start time and quota")
-    a =ap.parse_args()
+    a = ap.parse_args()
     sys.exit(login() if a.login else run(a))
